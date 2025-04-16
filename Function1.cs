@@ -35,41 +35,57 @@ namespace TicketHubFunction
                 _logger.LogError("Ticket is null");
                 return;
             }
-            _logger.LogInformation($"C# Hello: {ticket.Name}!");
+            _logger.LogInformation($"Deserialized ticket for {ticket.Name}, Email: {ticket.Email}");
 
             // Get connection string from app settings
             string? connectionString = Environment.GetEnvironmentVariable("SqlConnectionString");
             if (string.IsNullOrEmpty(connectionString))
             {
+                _logger.LogError("SQL connection string is missing from environment variables.");
                 throw new InvalidOperationException("SQL connection string is not set in the environment variables.");
             }
+            _logger.LogInformation("SQL connection string retrieved from environment variables.");
 
-            using (SqlConnection conn = new SqlConnection(connectionString))
+            try
             {
-                await conn.OpenAsync(); // Note the ASYNC
-
-                var query = "INSERT INTO Tickets (ConcertId, Email, Name, Phone, Quantity, CreditCard, Expiration, SecurityCode, Address, City, Province, PostalCode, Country) " +
-                            "VALUES (@ConcertId, @Email, @Name, @Phone, @Quantity, @CreditCard, @Expiration, @SecurityCode, @Address, @City, @Province, @PostalCode, @Country)";
-
-                using (SqlCommand cmd = new SqlCommand(query, conn))
+                // Opening SQL connection
+                using (SqlConnection conn = new SqlConnection(connectionString))
                 {
-                    // Adding parameters to prevent SQL injection
-                    cmd.Parameters.AddWithValue("@ConcertId", ticket.ConcertId);
-                    cmd.Parameters.AddWithValue("@Email", ticket.Email);
-                    cmd.Parameters.AddWithValue("@Name", ticket.Name);
-                    cmd.Parameters.AddWithValue("@Phone", ticket.Phone);
-                    cmd.Parameters.AddWithValue("@Quantity", ticket.Quantity);
-                    cmd.Parameters.AddWithValue("@CreditCard", ticket.CreditCard);
-                    cmd.Parameters.AddWithValue("@Expiration", ticket.Expiration);
-                    cmd.Parameters.AddWithValue("@SecurityCode", ticket.SecurityCode);
-                    cmd.Parameters.AddWithValue("@Address", ticket.Address);
-                    cmd.Parameters.AddWithValue("@City", ticket.City);
-                    cmd.Parameters.AddWithValue("@Province", ticket.Province);
-                    cmd.Parameters.AddWithValue("@PostalCode", ticket.PostalCode);
-                    cmd.Parameters.AddWithValue("@Country", ticket.Country);
+                    _logger.LogInformation("Opening SQL connection...");
+                    await conn.OpenAsync();
+                    _logger.LogInformation("SQL connection opened successfully.");
 
-                    await cmd.ExecuteNonQueryAsync();
+                    var query = "INSERT INTO Tickets (ConcertId, Email, Name, Phone, Quantity, CreditCard, Expiration, SecurityCode, Address, City, Province, PostalCode, Country) " +
+                                "VALUES (@ConcertId, @Email, @Name, @Phone, @Quantity, @CreditCard, @Expiration, @SecurityCode, @Address, @City, @Province, @PostalCode, @Country)";
+
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        _logger.LogInformation("Preparing to insert ticket into database...");
+
+                        // Adding parameters to prevent SQL injection
+                        cmd.Parameters.AddWithValue("@ConcertId", ticket.ConcertId);
+                        cmd.Parameters.AddWithValue("@Email", ticket.Email);
+                        cmd.Parameters.AddWithValue("@Name", ticket.Name);
+                        cmd.Parameters.AddWithValue("@Phone", ticket.Phone);
+                        cmd.Parameters.AddWithValue("@Quantity", ticket.Quantity);
+                        cmd.Parameters.AddWithValue("@CreditCard", ticket.CreditCard);
+                        cmd.Parameters.AddWithValue("@Expiration", ticket.Expiration);
+                        cmd.Parameters.AddWithValue("@SecurityCode", ticket.SecurityCode);
+                        cmd.Parameters.AddWithValue("@Address", ticket.Address);
+                        cmd.Parameters.AddWithValue("@City", ticket.City);
+                        cmd.Parameters.AddWithValue("@Province", ticket.Province);
+                        cmd.Parameters.AddWithValue("@PostalCode", ticket.PostalCode);
+                        cmd.Parameters.AddWithValue("@Country", ticket.Country);
+
+                        // Executing the SQL command
+                        await cmd.ExecuteNonQueryAsync();
+                        _logger.LogInformation("Ticket inserted successfully into the database.");
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"SQL error: {ex.Message}");
             }
         }
     }
