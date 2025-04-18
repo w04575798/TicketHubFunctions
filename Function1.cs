@@ -20,10 +20,11 @@ namespace TicketHubFunction
         [Function(nameof(Function1))]
         public async Task Run([QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] QueueMessage message)
         {
+            _logger.LogWarning($"RAW queue message: {message.MessageText}"); 
+
             _logger.LogInformation($"C# Queue trigger function processed: {message.MessageText}");
             string json = message.MessageText;
 
-            // Deserialize the message JSON into a Ticket object
             var options = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -32,23 +33,23 @@ namespace TicketHubFunction
 
             if (ticket == null)
             {
-                _logger.LogError("Ticket is null");
+                _logger.LogError("Ticket is null — likely a deserialization issue.");
                 return;
             }
+
             _logger.LogInformation($"Deserialized ticket for {ticket.Name}, Email: {ticket.Email}");
 
-            // Get connection string from app settings
             string? connectionString = Environment.GetEnvironmentVariable("SqlConnectionString");
             if (string.IsNullOrEmpty(connectionString))
             {
                 _logger.LogError("SQL connection string is missing from environment variables.");
                 throw new InvalidOperationException("SQL connection string is not set in the environment variables.");
             }
+
             _logger.LogInformation("SQL connection string retrieved from environment variables.");
 
             try
             {
-                // Opening SQL connection
                 using (SqlConnection conn = new SqlConnection(connectionString))
                 {
                     _logger.LogInformation("Opening SQL connection...");
@@ -62,7 +63,6 @@ namespace TicketHubFunction
                     {
                         _logger.LogInformation("Preparing to insert ticket into database...");
 
-                        // Adding parameters to prevent SQL injection
                         cmd.Parameters.AddWithValue("@ConcertId", ticket.ConcertId);
                         cmd.Parameters.AddWithValue("@Email", ticket.Email);
                         cmd.Parameters.AddWithValue("@Name", ticket.Name);
@@ -77,7 +77,6 @@ namespace TicketHubFunction
                         cmd.Parameters.AddWithValue("@PostalCode", ticket.PostalCode);
                         cmd.Parameters.AddWithValue("@Country", ticket.Country);
 
-                        // Executing the SQL command
                         await cmd.ExecuteNonQueryAsync();
                         _logger.LogInformation("Ticket inserted successfully into the database.");
                     }
