@@ -10,6 +10,6 @@
         }
     },
     "queues": {
-        "messageEncoding": "none"
+        "messageEncoding": "base64"
     }
 }
