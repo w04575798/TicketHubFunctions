@@ -1,8 +1,8 @@
 using System;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Azure.Storage.Queues.Models;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 
@@ -10,81 +10,82 @@ namespace TicketHubFunction
 {
     public class Function1
     {
-        private readonly ILogger<Function1> _logger;
-
-        public Function1(ILogger<Function1> logger)
-        {
-            _logger = logger;
-        }
-
         [Function(nameof(Function1))]
-        public async Task Run([QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] QueueMessage message)
+        public async Task Run(
+            [QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] string rawMessage,  
+            FunctionContext context)                                                         
         {
-            _logger.LogWarning($"RAW queue message: {message.MessageText}"); 
+            var log = context.GetLogger<Function1>();
 
-            _logger.LogInformation($"C# Queue trigger function processed: {message.MessageText}");
-            string json = message.MessageText;
+            // 1) Log the raw incoming payload
+            log.LogWarning($"RAW queue message: {rawMessage}");
 
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
-            Ticket? ticket = JsonSerializer.Deserialize<Ticket>(json, options);
-
-            if (ticket == null)
-            {
-                _logger.LogError("Ticket is null — likely a deserialization issue.");
-                return;
-            }
-
-            _logger.LogInformation($"Deserialized ticket for {ticket.Name}, Email: {ticket.Email}");
-
-            string? connectionString = Environment.GetEnvironmentVariable("SqlConnectionString");
-            if (string.IsNullOrEmpty(connectionString))
-            {
-                _logger.LogError("SQL connection string is missing from environment variables.");
-                throw new InvalidOperationException("SQL connection string is not set in the environment variables.");
-            }
-
-            _logger.LogInformation("SQL connection string retrieved from environment variables.");
-
+            // 2) Attempt deserialization
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            Ticket? ticket;
             try
             {
-                using (SqlConnection conn = new SqlConnection(connectionString))
-                {
-                    _logger.LogInformation("Opening SQL connection...");
-                    await conn.OpenAsync();
-                    _logger.LogInformation("SQL connection opened successfully.");
-
-                    var query = "INSERT INTO Tickets (ConcertId, Email, Name, Phone, Quantity, CreditCard, Expiration, SecurityCode, Address, City, Province, PostalCode, Country) " +
-                                "VALUES (@ConcertId, @Email, @Name, @Phone, @Quantity, @CreditCard, @Expiration, @SecurityCode, @Address, @City, @Province, @PostalCode, @Country)";
-
-                    using (SqlCommand cmd = new SqlCommand(query, conn))
-                    {
-                        _logger.LogInformation("Preparing to insert ticket into database...");
-
-                        cmd.Parameters.AddWithValue("@ConcertId", ticket.ConcertId);
-                        cmd.Parameters.AddWithValue("@Email", ticket.Email);
-                        cmd.Parameters.AddWithValue("@Name", ticket.Name);
-                        cmd.Parameters.AddWithValue("@Phone", ticket.Phone);
-                        cmd.Parameters.AddWithValue("@Quantity", ticket.Quantity);
-                        cmd.Parameters.AddWithValue("@CreditCard", ticket.CreditCard);
-                        cmd.Parameters.AddWithValue("@Expiration", ticket.Expiration);
-                        cmd.Parameters.AddWithValue("@SecurityCode", ticket.SecurityCode);
-                        cmd.Parameters.AddWithValue("@Address", ticket.Address);
-                        cmd.Parameters.AddWithValue("@City", ticket.City);
-                        cmd.Parameters.AddWithValue("@Province", ticket.Province);
-                        cmd.Parameters.AddWithValue("@PostalCode", ticket.PostalCode);
-                        cmd.Parameters.AddWithValue("@Country", ticket.Country);
-
-                        await cmd.ExecuteNonQueryAsync();
-                        _logger.LogInformation("Ticket inserted successfully into the database.");
-                    }
-                }
+                ticket = JsonSerializer.Deserialize<Ticket>(rawMessage, options);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"SQL error: {ex.Message}");
+                log.LogError($"Deserialization exception: {ex.Message}");
+                throw; // let it retry or go to poison
+            }
+
+            if (ticket == null)
+            {
+                log.LogError("Ticket is null after deserialization—check field names!");
+                return;
+            }
+            log.LogInformation($"Deserialized ticket for {ticket.Name}, Email: {ticket.Email}");
+
+            // 3) Database insert
+            string? connStr = Environment.GetEnvironmentVariable("SqlConnectionString");
+            if (string.IsNullOrEmpty(connStr))
+            {
+                log.LogError("SQL connection string missing!");
+                throw new InvalidOperationException("No SqlConnectionString in env vars");
+            }
+
+            try
+            {
+                using var conn = new SqlConnection(connStr);
+                await conn.OpenAsync();
+                log.LogInformation("SQL connection opened.");
+
+                var query = @"
+                    INSERT INTO Tickets
+                      (ConcertId, Email, Name, Phone, Quantity,
+                       CreditCard, Expiration, SecurityCode,
+                       Address, City, Province, PostalCode, Country)
+                    VALUES
+                      (@ConcertId, @Email, @Name, @Phone, @Quantity,
+                       @CreditCard, @Expiration, @SecurityCode,
+                       @Address, @City, @Province, @PostalCode, @Country)";
+
+                using var cmd = new SqlCommand(query, conn);
+                cmd.Parameters.AddWithValue("@ConcertId", ticket.ConcertId);
+                cmd.Parameters.AddWithValue("@Email", ticket.Email);
+                cmd.Parameters.AddWithValue("@Name", ticket.Name);
+                cmd.Parameters.AddWithValue("@Phone", ticket.Phone);
+                cmd.Parameters.AddWithValue("@Quantity", ticket.Quantity);
+                cmd.Parameters.AddWithValue("@CreditCard", ticket.CreditCard);
+                cmd.Parameters.AddWithValue("@Expiration", ticket.Expiration);
+                cmd.Parameters.AddWithValue("@SecurityCode", ticket.SecurityCode);
+                cmd.Parameters.AddWithValue("@Address", ticket.Address);
+                cmd.Parameters.AddWithValue("@City", ticket.City);
+                cmd.Parameters.AddWithValue("@Province", ticket.Province);
+                cmd.Parameters.AddWithValue("@PostalCode", ticket.PostalCode);
+                cmd.Parameters.AddWithValue("@Country", ticket.Country);
+
+                await cmd.ExecuteNonQueryAsync();
+                log.LogInformation("Ticket inserted successfully.");
+            }
+            catch (Exception ex)
+            {
+                log.LogError($"SQL error: {ex.Message}");
+                throw; // so Azure will retry or eventually poison
             }
         }
     }
