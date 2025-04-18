@@ -12,7 +12,7 @@ namespace TicketHubFunction
     {
         [Function(nameof(Function1))]
         public async Task Run(
-            [QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] string rawMessage,  
+            [QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] object rawMessage,  
             FunctionContext context)                                                         
         {
             var log = context.GetLogger<Function1>();
@@ -25,7 +25,7 @@ namespace TicketHubFunction
             Ticket? ticket;
             try
             {
-                ticket = JsonSerializer.Deserialize<Ticket>(rawMessage, options);
+                ticket = JsonSerializer.Deserialize<Ticket>(rawMessage.ToString(), options);
             }
             catch (Exception ex)
             {
