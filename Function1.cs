@@ -1,5 +1,4 @@
 using System;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Azure.Functions.Worker;
@@ -12,73 +11,58 @@ namespace TicketHubFunction
     {
         [Function(nameof(Function1))]
         public async Task Run(
-            [QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] string base64Message,
+            [QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] BinaryData rawData,
             FunctionContext context)
         {
             var log = context.GetLogger<Function1>();
 
-            // 1) Log raw incoming Base64 payload
-            log.LogWarning($"RAW queue message (Base64): {base64Message}");
+            string rawMessage = rawData.ToString();
+            log.LogWarning($"RAW queue message: {rawMessage}");
 
-            // 2) Decode the Base64 message to UTF-8 string
-            string rawMessage;
-            try
-            {
-                var messageBytes = Convert.FromBase64String(base64Message);
-                rawMessage = Encoding.UTF8.GetString(messageBytes);
-            }
-            catch (FormatException ex)
-            {
-                log.LogError($"Base64 decoding failed: {ex.Message}");
-                throw;
-            }
-
-            log.LogInformation($"Decoded raw message: {rawMessage}");
-
-            // 3) Attempt to deserialize the decoded message
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             Ticket? ticket;
             try
             {
-                ticket = JsonSerializer.Deserialize<Ticket>(rawMessage, options);
+                ticket = rawData.ToObjectFromJson<Ticket>(new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
             }
             catch (Exception ex)
             {
-                log.LogError($"Deserialization exception: {ex.Message}");
-                throw;
+                log.LogError($"Deserialization failed: {ex.Message}");
+                return;
             }
 
             if (ticket == null)
             {
-                log.LogError("Ticket is null after deserialization — check field names!");
+                log.LogError("Deserialized ticket is null.");
                 return;
             }
 
-            log.LogInformation($"Deserialized ticket for {ticket.Name}, Email: {ticket.Email}");
+            log.LogInformation($"Ticket for {ticket.Name}, Email: {ticket.Email}");
 
-            // 4) Database insert
             string? connStr = Environment.GetEnvironmentVariable("SqlConnectionString");
-            if (string.IsNullOrEmpty(connStr))
+            if (string.IsNullOrWhiteSpace(connStr))
             {
-                log.LogError("SQL connection string missing!");
-                throw new InvalidOperationException("No SqlConnectionString in env vars");
+                log.LogError("Missing SQL connection string in environment variables.");
+                throw new InvalidOperationException("Missing SqlConnectionString.");
             }
 
             try
             {
                 using var conn = new SqlConnection(connStr);
                 await conn.OpenAsync();
-                log.LogInformation("SQL connection opened.");
+                log.LogInformation("Connected to SQL.");
 
-                var query = @"
+                string query = @"
                     INSERT INTO Tickets
-                      (ConcertId, Email, Name, Phone, Quantity,
-                       CreditCard, Expiration, SecurityCode,
-                       Address, City, Province, PostalCode, Country)
+                    (ConcertId, Email, Name, Phone, Quantity,
+                     CreditCard, Expiration, SecurityCode,
+                     Address, City, Province, PostalCode, Country)
                     VALUES
-                      (@ConcertId, @Email, @Name, @Phone, @Quantity,
-                       @CreditCard, @Expiration, @SecurityCode,
-                       @Address, @City, @Province, @PostalCode, @Country)";
+                    (@ConcertId, @Email, @Name, @Phone, @Quantity,
+                     @CreditCard, @Expiration, @SecurityCode,
+                     @Address, @City, @Province, @PostalCode, @Country)";
 
                 using var cmd = new SqlCommand(query, conn);
                 cmd.Parameters.AddWithValue("@ConcertId", ticket.ConcertId);
@@ -96,11 +80,11 @@ namespace TicketHubFunction
                 cmd.Parameters.AddWithValue("@Country", ticket.Country);
 
                 await cmd.ExecuteNonQueryAsync();
-                log.LogInformation("Ticket inserted successfully.");
+                log.LogInformation("Ticket inserted into DB.");
             }
             catch (Exception ex)
             {
-                log.LogError($"SQL error: {ex.Message}");
+                log.LogError($"SQL insert failed: {ex.Message}");
                 throw;
             }
         }
