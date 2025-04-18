@@ -1,8 +1,8 @@
 using System;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 
@@ -12,25 +12,30 @@ namespace TicketHubFunction
     {
         [Function(nameof(Function1))]
         public async Task Run(
-            [QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] object rawMessage,  
-            FunctionContext context)                                                         
+            [QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] string rawMessage,
+            FunctionContext context)
+
         {
             var log = context.GetLogger<Function1>();
 
-            // 1) Log the raw incoming payload
+            // 1) Log the raw incoming payload (just in case we need to debug)
             log.LogWarning($"RAW queue message: {rawMessage}");
+
+            // If the message is Base64-encoded, we need to decode it:
+            byte[] messageBytes = Convert.FromBase64String(rawMessage);
+            string decodedMessage = Encoding.UTF8.GetString(messageBytes);
 
             // 2) Attempt deserialization
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             Ticket? ticket;
             try
             {
-                ticket = JsonSerializer.Deserialize<Ticket>(rawMessage.ToString(), options);
+                ticket = JsonSerializer.Deserialize<Ticket>(decodedMessage, options);
             }
             catch (Exception ex)
             {
                 log.LogError($"Deserialization exception: {ex.Message}");
-                throw; // let it retry or go to poison
+                throw; // Let it retry or move to poison queue
             }
 
             if (ticket == null)
@@ -38,6 +43,7 @@ namespace TicketHubFunction
                 log.LogError("Ticket is null after deserialization—check field names!");
                 return;
             }
+
             log.LogInformation($"Deserialized ticket for {ticket.Name}, Email: {ticket.Email}");
 
             // 3) Database insert
@@ -85,7 +91,7 @@ namespace TicketHubFunction
             catch (Exception ex)
             {
                 log.LogError($"SQL error: {ex.Message}");
-                throw; // so Azure will retry or eventually poison
+                throw; // Let it retry or eventually move to poison queue
             }
         }
     }
