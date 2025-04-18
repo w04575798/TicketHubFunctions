@@ -1,5 +1,4 @@
 using System;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Azure.Functions.Worker;
@@ -14,33 +13,28 @@ namespace TicketHubFunction
         public async Task Run(
             [QueueTrigger("tickethub", Connection = "AzureWebJobsStorage")] string rawMessage,
             FunctionContext context)
-
         {
             var log = context.GetLogger<Function1>();
 
-            // 1) Log the raw incoming payload (just in case we need to debug)
+            // 1) Log raw incoming payload
             log.LogWarning($"RAW queue message: {rawMessage}");
 
-            // If the message is Base64-encoded, we need to decode it:
-            byte[] messageBytes = Convert.FromBase64String(rawMessage);
-            string decodedMessage = Encoding.UTF8.GetString(messageBytes);
-
-            // 2) Attempt deserialization
+            // 2) Attempt to deserialize plain JSON
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             Ticket? ticket;
             try
             {
-                ticket = JsonSerializer.Deserialize<Ticket>(decodedMessage, options);
+                ticket = JsonSerializer.Deserialize<Ticket>(rawMessage, options);
             }
             catch (Exception ex)
             {
                 log.LogError($"Deserialization exception: {ex.Message}");
-                throw; // Let it retry or move to poison queue
+                throw;
             }
 
             if (ticket == null)
             {
-                log.LogError("Ticket is null after deserialization—check field names!");
+                log.LogError("Ticket is null after deserialization — check field names!");
                 return;
             }
 
@@ -91,7 +85,7 @@ namespace TicketHubFunction
             catch (Exception ex)
             {
                 log.LogError($"SQL error: {ex.Message}");
-                throw; // Let it retry or eventually move to poison queue
+                throw;
             }
         }
     }
